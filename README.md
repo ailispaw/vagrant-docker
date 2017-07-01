@@ -29,25 +29,10 @@ brew install docker
 brew install docker-compose --ignore-dependencies 
 ```
 
-
-### Add dns resolver domain
-
-```
-sudo vim /etc/resolver/docker
-```
-
-Add the following line:
-
-```
-nameserver 172.17.8.101
-```
-
-Also add resolver files for any additional domains you might want to use (eg. docker.example.com)
-
 ### Vagrant up
 
 ```
-git clone https://github.com/yappabe/vagrant-docker.git
+git clone -b dev https://github.com/ailispaw/vagrant-docker.git
 cd vagrant-docker
 vagrant up
 ```
@@ -86,9 +71,9 @@ docker ps
 When the following line appears:
 
 ```
-CONTAINER ID        IMAGE                         COMMAND                  CREATED             STATUS              PORTS                    NAMES
-fd17358a9eda        ailispaw/dnsdock:1.16.4       "dnsdock"                8 days ago          Up 21 hours         0.0.0.0:53->53/udp       dnsdock
-8d8b12ec7681        portainer/portainer           "/portainer"             8 days ago          Up 21 hours         0.0.0.0:9000->9000/tcp   portainer-portainer
+CONTAINER ID        IMAGE                 COMMAND             CREATED             STATUS              PORTS                    NAMES
+153375aa33fe        portainer/portainer   "/portainer"        11 seconds ago      Up 11 seconds       0.0.0.0:9000->9000/tcp   portainer-portainer
+f612ef7a8721        ailispaw/dnsdock      "dnsdock"           30 seconds ago      Up 29 seconds       0.0.0.0:53->53/udp       dnsdock
 ```
 
 You can now visit `http://dnsdock.docker/services`.

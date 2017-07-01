@@ -1,5 +1,9 @@
 
-Vagrant.require_version ">= 2.1.0"
+if Vagrant.has_plugin?("vagrant-triggers") then
+  Vagrant.require_version ">= 1.7.0"
+else
+  Vagrant.require_version ">= 2.1.0"
+end
 
 $vm_gui = false
 $vm_memory = 2048
@@ -33,63 +37,57 @@ module VagrantPlugins
 end
 
 Vagrant.configure("2") do |config|
-
+  config.vm.define "vagrant-docker"
   config.vm.box = "ailispaw/barge"
+  config.vm.hostname = "vagrant-docker"
   config.vm.network :private_network, ip: "#{$vm_ip_address}"
-  config.vm.synced_folder ENV['HOME'], ENV['HOME'], id: "home", :nfs => true, :mount_options => ['noatime,soft,nolock,vers=3,udp,proto=udp,udp,rsize=8192,wsize=8192,namlen=255,timeo=10,retrans=3,nfsvers=3,actimeo=1']
-  config.vm.guest = :linux
+  config.vm.synced_folder ".", Dir.pwd, id: "home", type: "nfs",
+    mount_options: [
+      'noatime,soft,nolock,vers=3,udp,proto=udp,udp',
+      'rsize=8192,wsize=8192,namlen=255,timeo=10,retrans=3,nfsvers=3,actimeo=1'
+    ]
 
   config.vm.provider :virtualbox do |vb|
-    vb.check_guest_additions = false
-    vb.functional_vboxsf     = false
-    vb.customize ["modifyvm", :id, "--uart1", "0x3F8", "4"]
     vb.customize ["modifyvm", :id, "--nicpromisc2", "allow-all"]
     vb.gui = vm_gui
     vb.memory = vm_memory
     vb.cpus = vm_cpus
-    vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
-    vb.customize ["modifyvm", :id, "--natdnsproxy1", "on"]
-    vb.customize ["modifyvm", :id, "--nictype1", "virtio"]
   end
 
-  config.vm.network "forwarded_port", guest: 2375, host: 2375, auto_correct: true
-  config.vm.network "forwarded_port", guest: 9000, host: 9000, auto_correct: true
+  config.vm.network :forwarded_port, guest: 2375, host: 2375, auto_correct: true
+  config.vm.network :forwarded_port, guest: 9000, host: 9000, auto_correct: true
 
   if Vagrant.has_plugin?("vagrant-vbguest") then
     config.vbguest.auto_update = false
   end
 
   # Adjusting datetime before provisioning.
-  config.vm.provision :shell, run: "always" do |sh|
+  config.vm.provision "timesync", type: "shell", run: "always" do |sh|
     sh.inline = "sntp -4sSc pool.ntp.org; date"
   end
 
-  config.vm.provision "file", source: "./docker", destination: '/tmp/docker'
-  config.vm.provision "shell", inline: "mv /tmp/docker /etc/default/docker", privileged: true
-  config.vm.provision "shell", inline: "mkdir -p /home/bargee/cronjobs", privileged: false
-  config.vm.provision "file", source: "./cronjobs/date.sh", destination: '/home/bargee/cronjobs/date.sh'
-  config.vm.provision "file", source: "./crontab", destination: '/home/bargee/crontab'
-  config.vm.provision "shell", inline: "cd /home/bargee/cronjobs; chmod 755 *.sh", privileged: true
-  config.vm.provision "shell", inline: "cd /home/bargee; cat crontab | crontab -;  crontab -l", privileged: true
-  config.vm.provision "shell", inline: "/etc/init.d/docker restart #{$docker_version}", privileged: true
+  config.vm.provision :file, source: "./docker", destination: '/tmp/docker'
 
-  config.vm.provision "docker" do |d|
-    d.pull_images "ailispaw/dnsdock:1.16.4"
+  config.vm.provision :shell do |sh|
+    sh.inline = <<-EOT
+      mv /tmp/docker /etc/default/docker
+      /etc/init.d/docker restart #{$docker_version}
+    EOT
+  end
+
+  config.vm.provision :docker do |d|
+    d.pull_images "ailispaw/dnsdock"
     d.run "dnsdock",
-      image: "ailispaw/dnsdock:1.16.4",
-      args: "-v /var/run/docker.sock:/var/run/docker.sock -p 0.0.0.0:53:53/udp",
-      restart: "always",
-      daemonize: true
+      image: "ailispaw/dnsdock",
+      args: "-v /var/run/docker.sock:/var/run/docker.sock -p 0.0.0.0:53:53/udp"
   end
 
   # http://portainer.io
-  config.vm.provision "docker" do |d|
+  config.vm.provision :docker do |d|
     d.pull_images "portainer/portainer"
-    d.run "portainer/portainer",
+    d.run "portainer",
       image: "portainer/portainer",
-      args: "-v /var/run/docker.sock:/var/run/docker.sock -p 9000:9000  --privileged",
-      restart: "always",
-      daemonize: true
+      args: "-v /var/run/docker.sock:/var/run/docker.sock -p 9000:9000"
   end
 
   config.vm.provision :shell do |sh|
@@ -99,14 +97,43 @@ Vagrant.configure("2") do |config|
     EOT
   end
 
-  config.trigger.after [:up, :resume] do |trigger|
-    trigger.info = "Setup route to vm ip #{$docker_net} -> #{$vm_ip_address}!"
-    trigger.run = {inline: "sudo route -n add -net #{$docker_net} #{$vm_ip_address}"}
-  end
+  if Vagrant.has_plugin?("vagrant-triggers") then
+    config.trigger.after [:up, :resume] do
+      info "Setup DNS resolver and routing to #{$docker_net} domain."
+      run <<-EOT
+        sh -c "sudo mkdir -p /etc/resolver && \
+          echo nameserver #{$vm_ip_address} | sudo tee /etc/resolver/docker && \
+          sudo route -n add -net #{$docker_net} #{$vm_ip_address}"
+      EOT
+    end
 
-  config.trigger.after [:destroy, :suspend, :halt] do |trigger|
-    trigger.info = "Remove route to vm ip!"
-    trigger.run = {inline: "sudo route -n delete -net #{$docker_net} #{$vm_ip_address}"}
-  end
+    config.trigger.after [:destroy, :suspend, :halt] do
+      info "Remove DNS resolver and routing to #{$docker_net} domain."
+      run <<-EOT
+        sh -c "sudo rm -f /etc/resolver/docker && \
+          sudo route -n delete -net #{$docker_net} #{$vm_ip_address}"
+      EOT
+    end
+  else
+    config.trigger.after [:up, :resume] do |trigger|
+      trigger.info = "Setup DNS resolver and routing to #{$docker_net} domain."
+      trigger.run = {
+        inline: <<-EOT
+          sh -c "sudo mkdir -p /etc/resolver && \
+            echo nameserver #{$vm_ip_address} | sudo tee /etc/resolver/docker && \
+            sudo route -n add -net #{$docker_net} #{$vm_ip_address}"
+        EOT
+      }
+    end
 
+    config.trigger.after [:destroy, :suspend, :halt] do |trigger|
+      trigger.info = "Remove DNS resolver and routing to #{$docker_net} domain."
+      trigger.run = {
+        inline: <<-EOT
+          sh -c "sudo rm -f /etc/resolver/docker && \
+            sudo route -n delete -net #{$docker_net} #{$vm_ip_address}"
+        EOT
+      }
+    end
+  end
 end
