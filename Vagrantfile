@@ -39,7 +39,7 @@ end
 Vagrant.configure("2") do |config|
   config.vm.define "vagrant-docker"
   config.vm.box = "ailispaw/barge"
-  config.vm.box_version = ">= 2.4.0"
+  config.vm.box_version = ">= 2.6.1"
   config.vm.hostname = "vagrant-docker"
   config.vm.network :private_network, ip: "#{$vm_ip_address}"
   config.vm.synced_folder ".", Dir.pwd, id: "home", type: "nfs",
