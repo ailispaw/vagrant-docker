@@ -88,7 +88,8 @@ Vagrant.configure("2") do |config|
     d.pull_images "portainer/portainer"
     d.run "portainer",
       image: "portainer/portainer",
-      args: "-v /var/run/docker.sock:/var/run/docker.sock -p 9000:9000"
+      args: "-v /var/run/docker.sock:/var/run/docker.sock -p 9000:9000",
+      cmd: "-H unix:///var/run/docker.sock"
   end
 
   config.vm.provision :shell do |sh|
