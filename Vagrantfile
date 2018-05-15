@@ -99,42 +99,43 @@ Vagrant.configure("2") do |config|
     EOT
   end
 
-  if Vagrant.has_plugin?("vagrant-triggers") then
-    config.trigger.after [:up, :resume] do
-      info "Setup DNS resolver and routing to #{$docker_net} domain."
-      run <<-EOT
+  dns_resolver = {
+    :setup => {
+      :info => "Setup DNS resolver and routing to #{$docker_net} domain.",
+      :inline => <<-EOT
         sh -c "sudo mkdir -p /etc/resolver && \
           echo nameserver #{$vm_ip_address} | sudo tee /etc/resolver/docker && \
           sudo route -n add -net #{$docker_net} #{$vm_ip_address}"
       EOT
-    end
-
-    config.trigger.after [:destroy, :suspend, :halt] do
-      info "Remove DNS resolver and routing to #{$docker_net} domain."
-      run <<-EOT
+    },
+    :remove => {
+      :info => "Remove DNS resolver and routing to #{$docker_net} domain.",
+      :inline => <<-EOT
         sh -c "sudo rm -f /etc/resolver/docker && \
           sudo route -n delete -net #{$docker_net} #{$vm_ip_address}"
       EOT
+    }
+  }
+  if Vagrant.has_plugin?("vagrant-triggers") then
+    config.trigger.after [:up, :resume] do
+      info dns_resolver[:setup][:info]
+      run dns_resolver[:setup][:inline]
+    end
+    config.trigger.after [:destroy, :suspend, :halt] do
+      info dns_resolver[:remove][:info]
+      run dns_resolver[:remove][:inline]
     end
   else
     config.trigger.after [:up, :resume] do |trigger|
-      trigger.info = "Setup DNS resolver and routing to #{$docker_net} domain."
+      trigger.info = dns_resolver[:setup][:info]
       trigger.run = {
-        inline: <<-EOT
-          sh -c "sudo mkdir -p /etc/resolver && \
-            echo nameserver #{$vm_ip_address} | sudo tee /etc/resolver/docker && \
-            sudo route -n add -net #{$docker_net} #{$vm_ip_address}"
-        EOT
+        inline: dns_resolver[:setup][:inline]
       }
     end
-
     config.trigger.after [:destroy, :suspend, :halt] do |trigger|
-      trigger.info = "Remove DNS resolver and routing to #{$docker_net} domain."
+      trigger.info = dns_resolver[:remove][:info]
       trigger.run = {
-        inline: <<-EOT
-          sh -c "sudo rm -f /etc/resolver/docker && \
-            sudo route -n delete -net #{$docker_net} #{$vm_ip_address}"
-        EOT
+        inline: dns_resolver[:remove][:inline]
       }
     end
   end
